@@ -35,7 +35,7 @@
 | `HF_TOKEN`        | `hf_xxxxxxxxxxxxxxxxxxxxxxxx`                  | Yes  |
 | `SPACE_REPO_ID`   | `yourname/demo,yourname/app,yourname/box`        | Yes  |
 | `BOT_TOKEN`       | `123456:ABC-DEF1234ghIkl-01234567890`     | No   |
-| `CHAT_ID`         | `-1001234567890` 或你的 ID                      | No   |
+| `CHAT_ID`         | `-1001234567890` 或你的Channel ID                      | No   |
 
 > HF_TOKEN 获取：https://huggingface.co/settings/tokens （勾选 Write 权限）
 
