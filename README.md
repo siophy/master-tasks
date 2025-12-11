@@ -33,7 +33,7 @@
 | Name              | 示例值                                          | 必填 |
 |-------------------|-------------------------------------------------|------|
 | `HF_TOKEN`        | `hf_xxxxxxxxxxxxxxxxxxxxxxxx`                  | Yes  |
-| `SPACE_REPO_ID`   | `yourname/demo,yourname2/app,xxx/gradio`        | Yes  |
+| `SPACE_REPO_ID`   | `yourname/demo,yourname/app,yourname/box`        | Yes  |
 | `BOT_TOKEN`       | `123456:ABC-DEF1234ghIkl-01234567890`     | No   |
 | `CHAT_ID`         | `-1001234567890` 或你的 ID                      | No   |
 
