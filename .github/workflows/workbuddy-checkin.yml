@@ -1,0 +1,41 @@
+name: WorkBuddy Daily Checkin
+
+on:
+  schedule:
+    # GitHub Actions 用的是 UTC 时间
+    # 下面这个表示每天 UTC 01:00（北京时间 09:00）执行
+    - cron: '0 1 * * *'
+  workflow_dispatch:  # 允许手动触发测试
+
+jobs:
+  checkin:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkin
+        env:
+          WB_AUTH: ${{ secrets.WB_AUTH }}
+          WB_DEVICE_TOKEN: ${{ secrets.WB_DEVICE_TOKEN }}
+          WB_USER_ID: ${{ secrets.WB_USER_ID }}
+        run: |
+          echo "=== 签到 ==="
+          curl -sS -X POST 'https://www.workbuddy.cn/v2/billing/meter/daily-checkin' \
+            -H 'Accept: application/json' \
+            -H 'Content-Type: application/json' \
+            -H "Authorization: Bearer ${WB_AUTH}" \
+            -H "X-User-Id: ${WB_USER_ID}" \
+            -H 'X-Domain: www.codebuddy.cn' \
+            -H "X-Device-Token: ${WB_DEVICE_TOKEN}" \
+            -H 'User-Agent: axios/1.16.1' \
+            -d '{}' | tee /tmp/checkin.json
+          echo
+
+          echo "=== 查询状态 ==="
+          curl -sS -X POST 'https://www.workbuddy.cn/v2/billing/meter/checkin-activity-status' \
+            -H 'Accept: application/json' \
+            -H 'Content-Type: application/json' \
+            -H "Authorization: Bearer ${WB_AUTH}" \
+            -H "X-User-Id: ${WB_USER_ID}" \
+            -H 'X-Domain: www.codebuddy.cn' \
+            -H "X-Device-Token: ${WB_DEVICE_TOKEN}" \
+            -H 'User-Agent: axios/1.16.1' \
+            -d '{}'
