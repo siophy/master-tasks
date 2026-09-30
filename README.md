@@ -83,6 +83,4 @@
 <h5 align="center">hf-waker —— 让你的 Space 永远醒着</h5>
 <div align="center">
 
-[![License](https://img.shields.io/github/license/oversizexl/hf-waker?color=orange)](./LICENSE)  
-
 </div>
