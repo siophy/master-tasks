@@ -14,6 +14,8 @@ jobs:
         env:
           QODER_AUTH: ${{ secrets.QODER_AUTH }}
           QODER_MACHINETOKEN: ${{ secrets.QODER_MACHINETOKEN }}
+          QODER_MACHINECODE: ${{ secrets.QODER_MACHINECODE }}
+          QODER_MACHINEID: ${{ secrets.QODER_MACHINEID }}
           QODER_COOKIE: ${{ secrets.QODER_COOKIE }}
         run: |
           echo "=== 1. 签到 ==="
