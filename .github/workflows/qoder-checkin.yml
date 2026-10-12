@@ -16,7 +16,6 @@ jobs:
           QODER_MACHINETOKEN: ${{ secrets.QODER_MACHINETOKEN }}
           QODER_MACHINECODE: ${{ secrets.QODER_MACHINECODE }}
           QODER_MACHINEID: ${{ secrets.QODER_MACHINEID }}
-          QODER_COOKIE: ${{ secrets.QODER_COOKIE }}
         run: |
           echo "=== 1. 签到 ==="
           curl -sS -X POST \
@@ -34,7 +33,6 @@ jobs:
             -H 'Origin: https://openapi.qoder.com.cn' \
             -H 'Referer: https://openapi.qoder.com.cn/growth-page/activity-iframe' \
             -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) QoderCN/0.4.3 Chrome/150.0.7871.114 Electron/43.1.1 Safari/537.36' \
-            -H "Cookie: ${QODER_COOKIE}" \
             --compressed | tee /tmp/claim.json
           echo
 
@@ -52,6 +50,5 @@ jobs:
             -H 'Sec-Fetch-Site: none' \
             -H 'Sec-Fetch-Mode: no-cors' \
             -H 'Sec-Fetch-Dest: empty' \
-            -H "Cookie: ${QODER_COOKIE}" \
             --compressed | tee /tmp/usage.json
           echo
