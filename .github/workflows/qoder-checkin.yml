@@ -2,7 +2,6 @@ name: Qoder Daily Checkin
 
 on:
   schedule:
-    # UTC 01:00 = 北京时间 09:00
     - cron: '19 21 * * *'
   workflow_dispatch:
 
@@ -11,6 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Claim daily reward
+        id: claim
         env:
           QODER_AUTH: ${{ secrets.QODER_AUTH }}
           QODER_MACHINETOKEN: ${{ secrets.QODER_MACHINETOKEN }}
@@ -33,14 +33,21 @@ jobs:
             -H 'Origin: https://openapi.qoder.com.cn' \
             -H 'Referer: https://openapi.qoder.com.cn/growth-page/activity-iframe' \
             -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) QoderCN/0.4.3 Chrome/150.0.7871.114 Electron/43.1.1 Safari/537.36' \
-            --compressed | tee /tmp/claim.json
-          echo
+            --compressed -o /tmp/claim.json -w '%{http_code}' > /tmp/claim.code
+          cat /tmp/claim.json; echo
+          echo "HTTP=$(cat /tmp/claim.code)"
 
-          echo "=== 2. 随机等待 ==="
-          DELAY=$((RANDOM % 8 + 3))   # 3~10 秒随机
+      - name: Random wait
+        run: |
+          DELAY=$((RANDOM % 8 + 3))
           echo "等待 ${DELAY} 秒..."
           sleep "$DELAY"
 
+      - name: Query usage
+        id: usage
+        env:
+          QODER_AUTH: ${{ secrets.QODER_AUTH }}
+        run: |
           echo "=== 3. 查询 usage ==="
           curl -sS -X GET 'https://openapi.qoder.com.cn/sash/api/v2/me/usage' \
             -H 'accept: application/json' \
@@ -50,5 +57,28 @@ jobs:
             -H 'Sec-Fetch-Site: none' \
             -H 'Sec-Fetch-Mode: no-cors' \
             -H 'Sec-Fetch-Dest: empty' \
-            --compressed | tee /tmp/usage.json
-          echo
+            --compressed -o /tmp/usage.json -w '%{http_code}' > /tmp/usage.code
+          cat /tmp/usage.json; echo
+          echo "HTTP=$(cat /tmp/usage.code)"
+
+      - name: Notify (success)
+        if: success()
+        env:
+          SERVERCHAN_KEY: ${{ secrets.SERVERCHAN_KEY }}
+        run: |
+          CLAIM=$(cat /tmp/claim.json 2>/dev/null | head -c 300)
+          USAGE=$(cat /tmp/usage.json 2>/dev/null | head -c 300)
+          curl -sS -X POST "https://sctapi.ftqq.com/${SERVERCHAN_KEY}.send" \
+            --data-urlencode "title=✅ Qoder 签到成功" \
+            --data-urlencode "desp=**签到**\`\`\`${CLAIM}\`\`\`\n\n**Usage**\`\`\`${USAGE}\`\`\`"
+
+      - name: Notify (failure)
+        if: failure()
+        env:
+          SERVERCHAN_KEY: ${{ secrets.SERVERCHAN_KEY }}
+        run: |
+          CLAIM=$(cat /tmp/claim.json 2>/dev/null | head -c 300)
+          USAGE=$(cat /tmp/usage.json 2>/dev/null | head -c 300)
+          curl -sS -X POST "https://sctapi.ftqq.com/${SERVERCHAN_KEY}.send" \
+            --data-urlencode "title=❌ Qoder 签到失败" \
+            --data-urlencode "desp=请检查 token 是否过期。\n\n**签到**\`\`\`${CLAIM}\`\`\`\n\n**Usage**\`\`\`${USAGE}\`\`\`\n\n[查看日志](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
