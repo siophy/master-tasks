@@ -17,7 +17,7 @@ jobs:
           WB_DEVICE_TOKEN: ${{ secrets.WB_DEVICE_TOKEN }}
           WB_USER_ID: ${{ secrets.WB_USER_ID }}
         run: |
-          echo "=== 签到 ==="
+          echo "=== 1. 签到 ==="
           curl -sS -X POST 'https://www.workbuddy.cn/v2/billing/meter/daily-checkin' \
             -H 'Accept: application/json' \
             -H 'Content-Type: application/json' \
@@ -28,8 +28,13 @@ jobs:
             -H 'User-Agent: axios/1.16.1' \
             -d '{}' | tee /tmp/checkin.json
           echo
-
-          echo "=== 查询状态 ==="
+          
+          echo "=== 2. 随机等待 ==="
+          DELAY=$((RANDOM % 8 + 3))   # 3~10 秒随机
+          echo "等待 ${DELAY} 秒..."
+          sleep "$DELAY"
+          
+          echo "=== 3. 查询状态 ==="
           curl -sS -X POST 'https://www.workbuddy.cn/v2/billing/meter/checkin-activity-status' \
             -H 'Accept: application/json' \
             -H 'Content-Type: application/json' \
