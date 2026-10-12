@@ -25,9 +25,9 @@ jobs:
             -H 'Cosy-Version: 0.4.3' \
             -H 'Cosy-MachineOS: x86_64_win32' \
             -H 'Cosy-MachineHostname: Mee-Laptop' \
-            -H 'Cosy-MachineId: a56c78b8-004e-413b-920f-c173abb676df' \
+            -H 'Cosy-MachineId: ${QODER_MACHINEID}' \
             -H "Cosy-MachineToken: ${QODER_MACHINETOKEN}" \
-            -H 'Cosy-MachineCode: 4a3c531f762e692bbd' \
+            -H 'Cosy-MachineCode: ${QODER_MACHINECODE}' \
             -H 'Cosy-MachineType: bd8aae611435da798e' \
             -H 'Origin: https://openapi.qoder.com.cn' \
             -H 'Referer: https://openapi.qoder.com.cn/growth-page/activity-iframe' \
