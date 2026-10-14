@@ -2,40 +2,131 @@ name: Qoder Daily Checkin
 
 on:
   schedule:
-    - cron: '39 0 * * *'
+    # 北京时间 10:10（UTC 02:10），签到每天 10:00 刷新
+    - cron: '49 0 * * *'
   workflow_dispatch:
 
 jobs:
   checkin:
     runs-on: ubuntu-latest
+    env:
+      QODER_AUTH: ${{ secrets.QODER_AUTH }}
+      QODER_MACHINETOKEN: ${{ secrets.QODER_MACHINETOKEN }}
+      QODER_MACHINECODE: ${{ secrets.QODER_MACHINECODE }}
+      QODER_MACHINEID: ${{ secrets.QODER_MACHINEID }}
+      # 统一客户端指纹，三个请求共用
+      UA: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) QoderCN/0.4.4 Chrome/150.0.7871.114 Electron/43.1.1 Safari/537.36'
+      COSY_VERSION: '0.4.4'
+      COSY_MACHINE_OS: 'x86_64_win32'
+      COSY_MACHINE_HOSTNAME: 'Mee-Laptop'
+      COSY_MACHINE_TYPE: 'aeef549c1464f27d6a'
+      ORIGIN: 'https://openapi.qoder.com.cn'
+      REFERER: 'https://openapi.qoder.com.cn/growth-page/activity-iframe'
+
     steps:
-      - name: Claim daily reward
-        id: claim
-        env:
-          QODER_AUTH: ${{ secrets.QODER_AUTH }}
-          QODER_MACHINETOKEN: ${{ secrets.QODER_MACHINETOKEN }}
-          QODER_MACHINECODE: ${{ secrets.QODER_MACHINECODE }}
-          QODER_MACHINEID: ${{ secrets.QODER_MACHINEID }}
+      - name: Query campaigns
         run: |
-          echo "=== 1. 签到 ==="
-          curl -sS -X POST \
-            'https://openapi.qoder.com.cn/sash/api/v1/me/campaigns/01a12102-9c4c-7460-a08b-61180061ac65/claim' \
+          echo "=== 1. 查询活动列表 ==="
+          curl -sS -X GET 'https://openapi.qoder.com.cn/sash/api/v1/me/campaigns' \
+            -H 'Connection: keep-alive' \
+            -H 'sec-ch-ua-platform: "Windows"' \
+            -H "User-Agent: ${UA}" \
+            -H 'sec-ch-ua: "Not;A=Brand";v="8", "Chromium";v="150"' \
+            -H 'sec-ch-ua-mobile: ?0' \
             -H 'Accept: */*' \
+            -H 'Sec-Fetch-Site: same-origin' \
+            -H 'Sec-Fetch-Mode: cors' \
+            -H 'Sec-Fetch-Dest: empty' \
+            -H "Referer: ${REFERER}" \
+            -H 'Accept-Language: zh-CN' \
             -H "Authorization: Bearer ${QODER_AUTH}" \
             -H 'Cosy-ClientType: 10' \
-            -H 'Cosy-Version: 0.4.3' \
-            -H 'Cosy-MachineOS: x86_64_win32' \
-            -H 'Cosy-MachineHostname: Mee-Laptop' \
-            -H 'Cosy-MachineId: ${QODER_MACHINEID}' \
+            -H "Cosy-Version: ${COSY_VERSION}" \
+            -H "Cosy-MachineOS: ${COSY_MACHINE_OS}" \
+            -H "Cosy-MachineHostname: ${COSY_MACHINE_HOSTNAME}" \
+            -H "Cosy-MachineId: ${QODER_MACHINEID}" \
             -H "Cosy-MachineToken: ${QODER_MACHINETOKEN}" \
-            -H 'Cosy-MachineCode: ${QODER_MACHINECODE}' \
-            -H 'Cosy-MachineType: bd8aae611435da798e' \
-            -H 'Origin: https://openapi.qoder.com.cn' \
-            -H 'Referer: https://openapi.qoder.com.cn/growth-page/activity-iframe' \
-            -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) QoderCN/0.4.3 Chrome/150.0.7871.114 Electron/43.1.1 Safari/537.36' \
-            --compressed -o /tmp/claim.json -w '%{http_code}' > /tmp/claim.code
+            -H "Cosy-MachineCode: ${QODER_MACHINECODE}" \
+            -H "Cosy-MachineType: ${COSY_MACHINE_TYPE}" \
+            --compressed -o /tmp/campaigns.json -w 'HTTP=%{http_code}\n'
+          echo "--- 响应 ---"
+          cat /tmp/campaigns.json; echo
+
+      - name: Parse campaign id
+        id: parse
+        run: |
+          python3 - <<'PY'
+          import json, os
+
+          raw = open('/tmp/campaigns.json').read()
+          # 阿里云盾会在 JSON 前后插入 'abb' / '498' 之类噪音，从第一个 { 开始解析
+          start = raw.find('{')
+          if start < 0:
+              raise SystemExit('响应里没有 JSON，可能被风控拦截')
+
+          try:
+              obj, _ = json.JSONDecoder().raw_decode(raw[start:])
+          except Exception as e:
+              print('JSON 解析失败:', e)
+              raise SystemExit(1)
+
+          target = None
+          for c in obj.get('campaigns', []):
+              # 签到特征：可领取 + CREDITS + 100 额度
+              if c.get('claimStatus') == 'CLAIMABLE' \
+                 and c.get('benefit', {}).get('kind') == 'CREDITS' \
+                 and c.get('benefit', {}).get('amount') == 100:
+                  target = c
+                  break
+
+          out = os.environ['GITHUB_OUTPUT']
+          if not target:
+              print('没有可领取的签到活动（可能今天已领过）')
+              with open(out, 'a') as f:
+                  f.write('skip=true\n')
+                  f.write('campaign_id=\n')
+          else:
+              cid = target['campaignId']
+              print(f"找到签到活动: {cid} (key={target.get('campaignKey')})")
+              with open(out, 'a') as f:
+                  f.write('skip=false\n')
+                  f.write(f'campaign_id={cid}\n')
+          PY
+
+      - name: Claim reward
+        if: steps.parse.outputs.skip != 'true'
+        env:
+          CAMPAIGN_ID: ${{ steps.parse.outputs.campaign_id }}
+        run: |
+          echo "=== 2. 签到（$CAMPAIGN_ID） ==="
+          curl -sS -X POST \
+            "https://openapi.qoder.com.cn/sash/api/v1/me/campaigns/${CAMPAIGN_ID}/claim" \
+            -H 'Connection: keep-alive' \
+            -H 'Content-Length: 0' \
+            -H 'sec-ch-ua-platform: "Windows"' \
+            -H "User-Agent: ${UA}" \
+            -H 'sec-ch-ua: "Not;A=Brand";v="8", "Chromium";v="150"' \
+            -H 'sec-ch-ua-mobile: ?0' \
+            -H 'Accept: */*' \
+            -H "Origin: ${ORIGIN}" \
+            -H 'Sec-Fetch-Site: same-origin' \
+            -H 'Sec-Fetch-Mode: cors' \
+            -H 'Sec-Fetch-Dest: empty' \
+            -H 'Sec-Fetch-Storage-Access: active' \
+            -H "Referer: ${REFERER}" \
+            -H 'Accept-Language: zh-CN' \
+            -H "Authorization: Bearer ${QODER_AUTH}" \
+            -H 'Cosy-ClientType: 10' \
+            -H "Cosy-Version: ${COSY_VERSION}" \
+            -H "Cosy-MachineOS: ${COSY_MACHINE_OS}" \
+            -H "Cosy-MachineHostname: ${COSY_MACHINE_HOSTNAME}" \
+            -H "Cosy-MachineId: ${QODER_MACHINEID}" \
+            -H "Cosy-MachineToken: ${QODER_MACHINETOKEN}" \
+            -H "Cosy-MachineCode: ${QODER_MACHINECODE}" \
+            -H "Cosy-MachineType: ${COSY_MACHINE_TYPE}" \
+            --compressed -o /tmp/claim.json -w 'HTTP=%{http_code}\n'
+          echo "--- 响应 ---"
           cat /tmp/claim.json; echo
-          echo "HTTP=$(cat /tmp/claim.code)"
 
       - name: Random wait
         run: |
@@ -44,41 +135,28 @@ jobs:
           sleep "$DELAY"
 
       - name: Query usage
-        id: usage
-        env:
-          QODER_AUTH: ${{ secrets.QODER_AUTH }}
         run: |
           echo "=== 3. 查询 usage ==="
           curl -sS -X GET 'https://openapi.qoder.com.cn/sash/api/v2/me/usage' \
-            -H 'accept: application/json' \
-            -H "authorization: Bearer ${QODER_AUTH}" \
-            -H 'cosy-clienttype: 10' \
-            -H 'user-agent: Qoder' \
+            -H 'Connection: keep-alive' \
+            -H 'sec-ch-ua-platform: "Windows"' \
+            -H "User-Agent: ${UA}" \
+            -H 'sec-ch-ua: "Not;A=Brand";v="8", "Chromium";v="150"' \
+            -H 'sec-ch-ua-mobile: ?0' \
+            -H 'Accept: */*' \
             -H 'Sec-Fetch-Site: none' \
             -H 'Sec-Fetch-Mode: no-cors' \
             -H 'Sec-Fetch-Dest: empty' \
-            --compressed -o /tmp/usage.json -w '%{http_code}' > /tmp/usage.code
+            -H 'Accept-Language: zh-CN' \
+            -H "Authorization: Bearer ${QODER_AUTH}" \
+            -H 'Cosy-ClientType: 10' \
+            -H "Cosy-Version: ${COSY_VERSION}" \
+            -H "Cosy-MachineOS: ${COSY_MACHINE_OS}" \
+            -H "Cosy-MachineHostname: ${COSY_MACHINE_HOSTNAME}" \
+            -H "Cosy-MachineId: ${QODER_MACHINEID}" \
+            -H "Cosy-MachineToken: ${QODER_MACHINETOKEN}" \
+            -H "Cosy-MachineCode: ${QODER_MACHINECODE}" \
+            -H "Cosy-MachineType: ${COSY_MACHINE_TYPE}" \
+            --compressed -o /tmp/usage.json -w 'HTTP=%{http_code}\n'
+          echo "--- 响应 ---"
           cat /tmp/usage.json; echo
-          echo "HTTP=$(cat /tmp/usage.code)"
-
-      - name: Notify (success)
-        if: success()
-        env:
-          SERVERCHAN_KEY: ${{ secrets.SERVERCHAN_KEY }}
-        run: |
-          CLAIM=$(cat /tmp/claim.json 2>/dev/null | head -c 300)
-          USAGE=$(cat /tmp/usage.json 2>/dev/null | head -c 300)
-          curl -sS -X POST "https://sctapi.ftqq.com/${SERVERCHAN_KEY}.send" \
-            --data-urlencode "title=✅ Qoder 签到成功" \
-            --data-urlencode "desp=**签到**\`\`\`${CLAIM}\`\`\`\n\n**Usage**\`\`\`${USAGE}\`\`\`"
-
-      - name: Notify (failure)
-        if: failure()
-        env:
-          SERVERCHAN_KEY: ${{ secrets.SERVERCHAN_KEY }}
-        run: |
-          CLAIM=$(cat /tmp/claim.json 2>/dev/null | head -c 300)
-          USAGE=$(cat /tmp/usage.json 2>/dev/null | head -c 300)
-          curl -sS -X POST "https://sctapi.ftqq.com/${SERVERCHAN_KEY}.send" \
-            --data-urlencode "title=❌ Qoder 签到失败" \
-            --data-urlencode "desp=请检查 token 是否过期。\n\n**签到**\`\`\`${CLAIM}\`\`\`\n\n**Usage**\`\`\`${USAGE}\`\`\`\n\n[查看日志](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
