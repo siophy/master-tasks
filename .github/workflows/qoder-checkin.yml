@@ -2,8 +2,8 @@ name: Qoder Daily Checkin
 
 on:
   schedule:
-    # 北京时间 10:10（UTC 02:10），签到每天 10:00 刷新
-    - cron: '49 0 * * *'
+    # 北京时间 10:10（UTC 02:10），签到每天 10:00（UTC+8）刷新
+    - cron: '10 23 * * *'
   workflow_dispatch:
 
 jobs:
@@ -14,7 +14,8 @@ jobs:
       QODER_MACHINETOKEN: ${{ secrets.QODER_MACHINETOKEN }}
       QODER_MACHINECODE: ${{ secrets.QODER_MACHINECODE }}
       QODER_MACHINEID: ${{ secrets.QODER_MACHINEID }}
-      # 统一客户端指纹，三个请求共用
+      SERVERCHAN_KEY: ${{ secrets.SERVERCHAN_KEY }}
+      # 统一客户端指纹，三个请求共用，模拟真实 QoderCN 0.4.4 客户端
       UA: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) QoderCN/0.4.4 Chrome/150.0.7871.114 Electron/43.1.1 Safari/537.36'
       COSY_VERSION: '0.4.4'
       COSY_MACHINE_OS: 'x86_64_win32'
@@ -24,6 +25,7 @@ jobs:
       REFERER: 'https://openapi.qoder.com.cn/growth-page/activity-iframe'
 
     steps:
+      # ---------- 1. 查询活动列表 ----------
       - name: Query campaigns
         run: |
           echo "=== 1. 查询活动列表 ==="
@@ -48,10 +50,11 @@ jobs:
             -H "Cosy-MachineToken: ${QODER_MACHINETOKEN}" \
             -H "Cosy-MachineCode: ${QODER_MACHINECODE}" \
             -H "Cosy-MachineType: ${COSY_MACHINE_TYPE}" \
-            --compressed -o /tmp/campaigns.json -w 'HTTP=%{http_code}\n'
-          echo "--- 响应 ---"
+            --compressed -o /tmp/campaigns.json -w '%{http_code}' > /tmp/campaigns.code
+          echo "HTTP=$(cat /tmp/campaigns.code)"
           cat /tmp/campaigns.json; echo
 
+      # ---------- 2. 解析活动 ID ----------
       - name: Parse campaign id
         id: parse
         run: |
@@ -59,10 +62,14 @@ jobs:
           import json, os
 
           raw = open('/tmp/campaigns.json').read()
-          # 阿里云盾会在 JSON 前后插入 'abb' / '498' 之类噪音，从第一个 { 开始解析
+          # 阿里云盾可能在 JSON 前后插入噪音（abb / 498 / 0 等），从第一个 { 开始解析
           start = raw.find('{')
           if start < 0:
-              raise SystemExit('响应里没有 JSON，可能被风控拦截')
+              print('响应里没有 JSON，可能被风控拦截')
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                  f.write('skip=true\n')
+                  f.write('campaign_id=\n')
+              raise SystemExit(1)
 
           try:
               obj, _ = json.JSONDecoder().raw_decode(raw[start:])
@@ -93,6 +100,7 @@ jobs:
                   f.write(f'campaign_id={cid}\n')
           PY
 
+      # ---------- 3. 签到 ----------
       - name: Claim reward
         if: steps.parse.outputs.skip != 'true'
         env:
@@ -124,16 +132,18 @@ jobs:
             -H "Cosy-MachineToken: ${QODER_MACHINETOKEN}" \
             -H "Cosy-MachineCode: ${QODER_MACHINECODE}" \
             -H "Cosy-MachineType: ${COSY_MACHINE_TYPE}" \
-            --compressed -o /tmp/claim.json -w 'HTTP=%{http_code}\n'
-          echo "--- 响应 ---"
+            --compressed -o /tmp/claim.json -w '%{http_code}' > /tmp/claim.code
+          echo "HTTP=$(cat /tmp/claim.code)"
           cat /tmp/claim.json; echo
 
+      # ---------- 4. 随机等待 ----------
       - name: Random wait
         run: |
           DELAY=$((RANDOM % 8 + 3))
           echo "等待 ${DELAY} 秒..."
           sleep "$DELAY"
 
+      # ---------- 5. 查询 usage ----------
       - name: Query usage
         run: |
           echo "=== 3. 查询 usage ==="
@@ -157,6 +167,52 @@ jobs:
             -H "Cosy-MachineToken: ${QODER_MACHINETOKEN}" \
             -H "Cosy-MachineCode: ${QODER_MACHINECODE}" \
             -H "Cosy-MachineType: ${COSY_MACHINE_TYPE}" \
-            --compressed -o /tmp/usage.json -w 'HTTP=%{http_code}\n'
-          echo "--- 响应 ---"
+            --compressed -o /tmp/usage.json -w '%{http_code}' > /tmp/usage.code
+          echo "HTTP=$(cat /tmp/usage.code)"
           cat /tmp/usage.json; echo
+
+      # ---------- 6. 检查 HTTP 码，异常则失败 ----------
+      - name: Check HTTP codes
+        run: |
+          FAIL=0
+          for n in campaigns claim usage; do
+            CODE=$(cat /tmp/$n.code 2>/dev/null || echo "")
+            if [ -z "$CODE" ]; then
+              echo "::warning::$n 没有产生响应码（可能被跳过）"
+            elif [ "$CODE" != "200" ]; then
+              echo "::error::$n 返回 HTTP $CODE"
+              FAIL=1
+            fi
+          done
+          if [ "$FAIL" = "1" ]; then
+            echo "有接口返回非 200，可能 token 过期或被风控"
+            exit 1
+          fi
+
+      # ---------- 7. 成功通知 ----------
+      - name: Notify (success)
+        if: success()
+        run: |
+          CLAIM=$(cat /tmp/claim.json 2>/dev/null | head -c 400)
+          USAGE=$(cat /tmp/usage.json 2>/dev/null | head -c 400)
+          SKIP="${{ steps.parse.outputs.skip }}"
+          if [ "$SKIP" = "true" ]; then
+            TITLE="ℹ️ Qoder 今日已签到"
+            BODY="没有可领取的签到活动（今日已领过）。\n\n**Usage**\n\`\`\`${USAGE}\`\`\`"
+          else
+            TITLE="✅ Qoder 签到成功"
+            BODY="**签到响应**\n\`\`\`${CLAIM}\`\`\`\n\n**Usage**\n\`\`\`${USAGE}\`\`\`"
+          fi
+          curl -sS -X POST "https://sctapi.ftqq.com/${SERVERCHAN_KEY}.send" \
+            --data-urlencode "title=${TITLE}" \
+            --data-urlencode "desp=${BODY}"
+
+      # ---------- 8. 失败通知 ----------
+      - name: Notify (failure)
+        if: failure()
+        run: |
+          CAMPAIGNS=$(cat /tmp/campaigns.json 2>/dev/null | head -c 400)
+          CLAIM=$(cat /tmp/claim.json 2>/dev/null | head -c 400)
+          curl -sS -X POST "https://sctapi.ftqq.com/${SERVERCHAN_KEY}.send" \
+            --data-urlencode "title=❌ Qoder 签到失败" \
+            --data-urlencode "desp=请检查 token 是否过期。\n\n**campaigns**\n\`\`\`${CAMPAIGNS}\`\`\`\n\n**claim**\n\`\`\`${CLAIM}\`\`\`\n\n[查看日志](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
