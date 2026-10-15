@@ -2,20 +2,22 @@ name: WorkBuddy Daily Checkin
 
 on:
   schedule:
-    # GitHub Actions 用的是 UTC 时间
-    # 下面这个表示每天 UTC 01:00（北京时间 09:00）执行
+    # UTC 20:20 = 北京时间次日 04:20（你原来的时间，我保持不变）
     - cron: '20 20 * * *'
-  workflow_dispatch:  # 允许手动触发测试
+  workflow_dispatch:
 
 jobs:
   checkin:
     runs-on: ubuntu-latest
+    env:
+      WB_AUTH: ${{ secrets.WB_AUTH }}
+      WB_DEVICE_TOKEN: ${{ secrets.WB_DEVICE_TOKEN }}
+      WB_USER_ID: ${{ secrets.WB_USER_ID }}
+      SERVERCHAN_KEY: ${{ secrets.SERVERCHAN_KEY }}
+
     steps:
+      # ---------- 1. 签到 ----------
       - name: Checkin
-        env:
-          WB_AUTH: ${{ secrets.WB_AUTH }}
-          WB_DEVICE_TOKEN: ${{ secrets.WB_DEVICE_TOKEN }}
-          WB_USER_ID: ${{ secrets.WB_USER_ID }}
         run: |
           echo "=== 1. 签到 ==="
           curl -sS -X POST 'https://www.workbuddy.cn/v2/billing/meter/daily-checkin' \
@@ -26,14 +28,21 @@ jobs:
             -H 'X-Domain: www.codebuddy.cn' \
             -H "X-Device-Token: ${WB_DEVICE_TOKEN}" \
             -H 'User-Agent: axios/1.16.1' \
-            -d '{}' | tee /tmp/checkin.json
-          echo
-          
-          echo "=== 2. 随机等待 ==="
-          DELAY=$((RANDOM % 8 + 3))   # 3~10 秒随机
+            -d '{}' \
+            --compressed -o /tmp/checkin.json -w '%{http_code}' > /tmp/checkin.code
+          echo "HTTP=$(cat /tmp/checkin.code)"
+          cat /tmp/checkin.json; echo
+
+      # ---------- 2. 随机等待 ----------
+      - name: Random wait
+        run: |
+          DELAY=$((RANDOM % 8 + 3))
           echo "等待 ${DELAY} 秒..."
           sleep "$DELAY"
-          
+
+      # ---------- 3. 查询状态 ----------
+      - name: Query status
+        run: |
           echo "=== 3. 查询状态 ==="
           curl -sS -X POST 'https://www.workbuddy.cn/v2/billing/meter/checkin-activity-status' \
             -H 'Accept: application/json' \
@@ -43,4 +52,45 @@ jobs:
             -H 'X-Domain: www.codebuddy.cn' \
             -H "X-Device-Token: ${WB_DEVICE_TOKEN}" \
             -H 'User-Agent: axios/1.16.1' \
-            -d '{}'
+            -d '{}' \
+            --compressed -o /tmp/status.json -w '%{http_code}' > /tmp/status.code
+          echo "HTTP=$(cat /tmp/status.code)"
+          cat /tmp/status.json; echo
+
+      # ---------- 4. 检查 HTTP 码 ----------
+      - name: Check HTTP codes
+        run: |
+          FAIL=0
+          for n in checkin status; do
+            CODE=$(cat /tmp/$n.code 2>/dev/null || echo "")
+            if [ -z "$CODE" ]; then
+              echo "::warning::$n 没有产生响应码"
+            elif [ "$CODE" != "200" ]; then
+              echo "::error::$n 返回 HTTP $CODE"
+              FAIL=1
+            fi
+          done
+          if [ "$FAIL" = "1" ]; then
+            echo "有接口返回非 200，可能 token 过期"
+            exit 1
+          fi
+
+      # ---------- 5. 成功通知 ----------
+      - name: Notify (success)
+        if: success()
+        run: |
+          CHECKIN=$(cat /tmp/checkin.json 2>/dev/null | head -c 400)
+          STATUS=$(cat /tmp/status.json 2>/dev/null | head -c 500)
+          curl -sS -X POST "https://sctapi.ftqq.com/${SERVERCHAN_KEY}.send" \
+            --data-urlencode "title=✅ WorkBuddy 签到成功" \
+            --data-urlencode "desp=**签到响应**\n\`\`\`${CHECKIN}\`\`\`\n\n**状态**\n\`\`\`${STATUS}\`\`\`"
+
+      # ---------- 6. 失败通知 ----------
+      - name: Notify (failure)
+        if: failure()
+        run: |
+          CHECKIN=$(cat /tmp/checkin.json 2>/dev/null | head -c 400)
+          STATUS=$(cat /tmp/status.json 2>/dev/null | head -c 400)
+          curl -sS -X POST "https://sctapi.ftqq.com/${SERVERCHAN_KEY}.send" \
+            --data-urlencode "title=❌ WorkBuddy 签到失败" \
+            --data-urlencode "desp=请检查 token 是否过期。\n\n**签到**\n\`\`\`${CHECKIN}\`\`\`\n\n**状态**\n\`\`\`${STATUS}\`\`\`\n\n[查看日志](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
